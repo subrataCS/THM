@@ -1,7 +1,9 @@
 # ColdStart - TryHackMe Writeup
 
 Difficulty: Easy
+
 Platform: TryHackMe
+
 Topics: FTP, Source Code Review, Information Disclosure, Credential Reuse, Tar Wildcard Injection, Cron Job Privilege Escalation
 
 
