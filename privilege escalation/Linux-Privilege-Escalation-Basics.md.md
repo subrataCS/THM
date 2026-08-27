@@ -166,4 +166,4 @@ find / -size +50M
 4. File Enumeration
 ```
 
-> Good enumeration solves more boxes than exploits. Always enumerate thoroughly before searching for privilege escalation techniques.
+That's it for basic .
