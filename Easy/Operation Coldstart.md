@@ -1,4 +1,4 @@
-# ColdStart - TryHackMe Writeup
+# ColdStart - TryHackMe Writeup ( Cron-job to get into root ).
 
 Difficulty: Easy
 
